@@ -114,6 +114,7 @@ def _run_claude(prompt: str, work_dir: str, job: dict) -> subprocess.CompletedPr
             "--model", "claude-opus-4-6",
             "--output-format", "text",
             "--max-turns", "50",
+            "--dangerously-skip-permissions",
         ],
         cwd=work_dir,
         stdout=subprocess.PIPE,
@@ -299,20 +300,55 @@ def _artifact_filename(stage: str, parent_key: str) -> str:
 
 
 def _ensure_description_text(job: dict) -> None:
-    """Convert ADF description to plain text if not already done."""
+    """Enrich job with parent summary and description.
+
+    Subtasks only have a pipeline-generated name like "[AIDEV-38] Разработка".
+    We need the parent's actual summary ("ActionGate в robot_bridge") and
+    description to give Claude Code enough context.
+    """
+    from orchestrator import parse_adf_to_text
+
+    # Convert own ADF description
     if not job.get("description_text") and job.get("description"):
-        from orchestrator import parse_adf_to_text
         job["description_text"] = parse_adf_to_text(job["description"])
-    # If subtask has no description, fetch parent's description
-    if not job.get("description_text") and job.get("parent_key") != job.get("issue_key"):
+
+    # For subtasks: fetch parent info (summary + description + epic context)
+    if job.get("parent_key") and job["parent_key"] != job.get("issue_key"):
         try:
             parent = jira.get_issue(job["parent_key"])
-            parent_desc = parent.get("fields", {}).get("description", {})
-            if parent_desc:
-                from orchestrator import parse_adf_to_text
-                job["description_text"] = parse_adf_to_text(parent_desc)
+            parent_fields = parent.get("fields", {})
+
+            # Store parent summary (the actual task name)
+            parent_summary = parent_fields.get("summary", "")
+            if parent_summary:
+                job["parent_summary"] = parent_summary
+
+            # Fetch parent description if we don't have one
+            if not job.get("description_text"):
+                parent_desc = parent_fields.get("description", {})
+                if parent_desc:
+                    job["description_text"] = parse_adf_to_text(parent_desc)
+
+            # Try to get epic context too
+            epic_ref = parent_fields.get("parent", {})
+            if epic_ref and epic_ref.get("key"):
+                try:
+                    epic = jira.get_issue(epic_ref["key"])
+                    epic_fields = epic.get("fields", {})
+                    epic_summary = epic_fields.get("summary", "")
+                    epic_desc = epic_fields.get("description", {})
+                    parts = []
+                    if epic_summary:
+                        parts.append(f"Эпик: {epic_summary}")
+                    if epic_desc:
+                        parts.append(parse_adf_to_text(epic_desc))
+                    if parts:
+                        job["epic_context"] = "\n".join(parts)
+                except Exception:
+                    pass
+
         except Exception as e:
-            logger.warning("Failed to fetch parent description: %s", e)
+            logger.warning("Failed to fetch parent info: %s", e)
 
 
 def run_artifact_stage(job: dict) -> None:

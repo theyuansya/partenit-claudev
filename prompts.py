@@ -16,12 +16,36 @@ from __future__ import annotations
 # ── Shared header ─────────────────────────────────────────────────────────────
 
 def _base_header(issue: dict) -> str:
+    parent_summary = issue.get('parent_summary', issue['summary'])
+    epic_section = ""
+    if issue.get('epic_context'):
+        epic_section = (
+            "## Контекст эпика\n"
+            f"{issue['epic_context']}\n\n"
+        )
+
+    desc_text = issue.get('description_text', '')
+    desc_section = ""
+    if desc_text:
+        desc_section = (
+            "## Описание родительской задачи\n"
+            f"{desc_text}\n\n"
+        )
+    elif not desc_text:
+        desc_section = (
+            "## Описание родительской задачи\n"
+            f"(Описание не заполнено. Ориентируйся на название задачи "
+            f"и контекст эпика выше.)\n\n"
+        )
+
     return (
-        f"## Задача: {issue['parent_key']} / {issue['key']} — {issue['summary']}\n\n"
-        f"Тип этапа: **{issue['stage']}** | Приоритет: {issue.get('priority', 'Medium')}\n"
+        f"## Задача: {issue['parent_key']} — {parent_summary}\n\n"
+        f"Подзадача: {issue['key']} | "
+        f"Тип этапа: **{issue['stage']}** | "
+        f"Приоритет: {issue.get('priority', 'Medium')}\n"
         f"Компоненты: {', '.join(issue.get('components', []) or [])}\n\n"
-        "## Описание родительской задачи\n"
-        f"{issue['description_text']}\n\n"
+        + epic_section
+        + desc_section
     )
 
 
