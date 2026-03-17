@@ -27,6 +27,8 @@ from prompts import build_stage_prompt
 from config import (
     GITHUB_TOKEN_TRUST_LAYER,
     GITHUB_REPO,
+    GITHUB_TOKEN_BRIDGE,
+    GITHUB_REPO_BRIDGE,
     STAGE_BRANCH,
     JOB_TIMEOUT_MINUTES,
     MAX_RETRIES,
@@ -48,11 +50,39 @@ jira = JiraClient()
 github = GitHubClient()
 
 
+# ── Repo routing ──────────────────────────────────────────────────────────────
+
+def _get_repo_config(job: dict) -> dict:
+    """Return {"repo": ..., "token": ...} based on job labels.
+
+    If the job has label ``repo:bridge`` → bridge repo/token,
+    otherwise the default trust-layer repo/token.
+    """
+    labels = job.get("labels", [])
+    if "repo:bridge" in labels:
+        return {"repo": GITHUB_REPO_BRIDGE, "token": GITHUB_TOKEN_BRIDGE}
+    return {"repo": GITHUB_REPO, "token": GITHUB_TOKEN_TRUST_LAYER}
+
+
+def _github_for_repo(repo_cfg: dict) -> GitHubClient:
+    """Return a GitHubClient configured for the given repo/token."""
+    client = GitHubClient()
+    client.repo = repo_cfg["repo"]
+    client.token = repo_cfg["token"]
+    client.headers = {
+        "Authorization": f"Bearer {repo_cfg['token']}",
+        "Accept": "application/vnd.github.v3+json",
+    }
+    return client
+
+
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
-def _clone_repo(work_dir: str, branch_name: str) -> None:
+def _clone_repo(work_dir: str, branch_name: str, repo_cfg: dict | None = None) -> None:
     """Clone repo and create a new local branch (no remote tracking)."""
-    repo_url = f"https://x-access-token:{GITHUB_TOKEN_TRUST_LAYER}@github.com/{GITHUB_REPO}.git"
+    if repo_cfg is None:
+        repo_cfg = {"repo": GITHUB_REPO, "token": GITHUB_TOKEN_TRUST_LAYER}
+    repo_url = f"https://x-access-token:{repo_cfg['token']}@github.com/{repo_cfg['repo']}.git"
     result = subprocess.run(
         ["git", "clone", "--depth=1", repo_url, work_dir],
         capture_output=True,
@@ -69,13 +99,15 @@ def _clone_repo(work_dir: str, branch_name: str) -> None:
     )
 
 
-def _clone_repo_with_branch(work_dir: str, branch_name: str) -> None:
+def _clone_repo_with_branch(work_dir: str, branch_name: str, repo_cfg: dict | None = None) -> None:
     """Clone repo; if branch_name exists on remote, check it out.
     Otherwise create a new branch. This allows code stages to pick up
     artifacts committed by earlier artifact stages."""
+    if repo_cfg is None:
+        repo_cfg = {"repo": GITHUB_REPO, "token": GITHUB_TOKEN_TRUST_LAYER}
     repo_url = (
-        f"https://x-access-token:{GITHUB_TOKEN_TRUST_LAYER}"
-        f"@github.com/{GITHUB_REPO}.git"
+        f"https://x-access-token:{repo_cfg['token']}"
+        f"@github.com/{repo_cfg['repo']}.git"
     )
     # Try cloning the existing branch first
     result = subprocess.run(
@@ -495,9 +527,10 @@ def run_artifact_stage(job: dict) -> None:
         artifact_context = collect_artifact_context(parent_key, jira)
         prompt = build_stage_prompt(job, artifact_context)
 
-        logger.info("[%s] Cloning for artifact stage %s", issue_key, stage)
+        repo_cfg = _get_repo_config(job)
+        logger.info("[%s] Cloning for artifact stage %s (repo: %s)", issue_key, stage, repo_cfg["repo"])
         os.makedirs(work_dir, exist_ok=True)
-        _clone_repo(work_dir, f"analysis/{issue_key.lower()}")
+        _clone_repo(work_dir, f"analysis/{issue_key.lower()}", repo_cfg)
 
         start = time.time()
         if job.get("cancelled"):
@@ -552,7 +585,7 @@ def run_artifact_stage(job: dict) -> None:
 
         jira_domain = job.get("jira_domain", "")
         parent_url = f"https://{jira_domain}/browse/{parent_key}"
-        github_url = f"https://github.com/{GITHUB_REPO}/blob/{branch_name}/{artifact_fname}"
+        github_url = f"https://github.com/{repo_cfg['repo']}/blob/{branch_name}/{artifact_fname}"
 
         jira.add_comment(
             issue_key,
@@ -623,11 +656,12 @@ def run_code_stage(job: dict) -> None:
         artifact_context = collect_artifact_context(parent_key, jira)
         prompt = build_stage_prompt(job, artifact_context)
 
+        repo_cfg = _get_repo_config(job)
         branch_name = f"feature/{parent_key.lower()}"
-        logger.info("[%s] Cloning for code stage %s (branch %s)",
-                    issue_key, stage, branch_name)
+        logger.info("[%s] Cloning for code stage %s (branch %s, repo: %s)",
+                    issue_key, stage, branch_name, repo_cfg["repo"])
         os.makedirs(work_dir, exist_ok=True)
-        _clone_repo_with_branch(work_dir, branch_name)
+        _clone_repo_with_branch(work_dir, branch_name, repo_cfg)
 
         start = time.time()
         if job.get("cancelled"):
@@ -682,13 +716,14 @@ def run_code_stage(job: dict) -> None:
                 f"### Файлы\n{files_list}\n\n"
                 f"### Тесты: {analysis.get('tests_status', '?')}\n"
             )
-            pr = github.create_pr(
+            gh = _github_for_repo(repo_cfg)
+            pr = gh.create_pr(
                 head=branch_name,
                 base=STAGE_BRANCH,
                 title=f"{issue_key}: {job['summary']}",
                 body=pr_body,
             )
-            github.add_labels(pr["number"], ["automated", "claude-code", stage])
+            gh.add_labels(pr["number"], ["automated", "claude-code", stage])
             notify_pr_created(issue_key, parent_key, pr["html_url"],
                               job.get("jira_domain", ""), len(changed))
 
@@ -760,10 +795,12 @@ def run_merge_job(job: dict) -> None:
     """
     issue_key = job["issue_key"]
     jira_domain = job.get("jira_domain", "")
+    repo_cfg = _get_repo_config(job)
+    gh = _github_for_repo(repo_cfg)
 
     try:
         branch_name = f"feature/{issue_key.lower()}"
-        pr = github.find_pr(branch_name)
+        pr = gh.find_pr(branch_name)
 
         if not pr:
             jira.add_comment(
@@ -777,7 +814,7 @@ def run_merge_job(job: dict) -> None:
         pr_url = pr["html_url"]
         logger.info("[%s] Merging PR #%s into %s", issue_key, pr_number, pr["base"]["ref"])
 
-        merge_result = github.merge_pr(
+        merge_result = gh.merge_pr(
             pr_number,
             commit_message=f"{issue_key}: {job['summary']} (auto-merge)",
         )

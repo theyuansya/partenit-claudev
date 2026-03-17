@@ -20,6 +20,10 @@ GITHUB_TOKEN_TRUST_LAYER = os.environ.get(           # trust-layer repo (clone +
 )
 GITHUB_REPO = os.environ["GITHUB_REPO"]
 
+# GitHub — robot bridge repo (fallback to main repo values)
+GITHUB_REPO_BRIDGE = os.environ.get("GITHUB_REPO_BRIDGE", GITHUB_REPO)
+GITHUB_TOKEN_BRIDGE = os.environ.get("GITHUB_TOKEN_BRIDGE", "") or GITHUB_TOKEN_TRUST_LAYER
+
 # Pipeline
 TRIGGER_STATUS = os.environ.get("TRIGGER_STATUS", "In Progress")
 STAGE_BRANCH = os.environ.get("STAGE_BRANCH", "stage")
