@@ -1,0 +1,15 @@
+version: "3.8"
+
+services:
+  pipeline:
+    build: .
+    ports:
+      - "127.0.0.1:8090:8090"
+    volumes:
+      # Авторизация Claude Code (Max) — копируется с рабочей машины
+      - ~/.claude:/root/.claude:ro
+      # Временная директория для клонов репозиториев и артефактов
+      - /tmp/pipeline-work:/tmp/pipeline-work
+    env_file: .env
+    restart: unless-stopped
+
