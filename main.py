@@ -7,8 +7,9 @@ from typing import Dict, Any
 from fastapi import FastAPI, Request, HTTPException
 import uvicorn
 
-import os
-from config import PORT, WEBHOOK_SECRET, TRIGGER_STATUS, MAX_CONCURRENT_JOBS, JIRA_DOMAIN, STATUS_MERGE
+from config import (
+    PORT, WEBHOOK_SECRET, TRIGGER_STATUS, MAX_CONCURRENT_JOBS, JIRA_DOMAIN, STATUS_MERGE,
+)
 from dependency_tracker import get_stage
 
 logging.basicConfig(
@@ -87,6 +88,8 @@ async def webhook_jira(request: Request, secret: str = "") -> Dict[str, Any]:
     issue_key = issue.get("key", "")
     status_name = fields.get("status", {}).get("name", "")
     issue_type = fields.get("issuetype", {}).get("name", "")
+
+    logger.info("Webhook: key=%s type=%r status=%r", issue_key, issue_type, status_name)
 
     # 3. Фильтр — принимаем TRIGGER_STATUS (старт пайплайна) и STATUS_MERGE (авто-мердж)
     if status_name not in (TRIGGER_STATUS, STATUS_MERGE):
