@@ -236,11 +236,22 @@ async def webhook_jira(request: Request, secret: str = "") -> Dict[str, Any]:
     logger.info("Webhook: key=%s type=%r status=%r", issue_key, issue_type, status_name)
 
     # 3. Фильтр — принимаем TRIGGER_STATUS, STATUS_MERGE, STATUS_CANCELLED, STATUS_DONE
-    if status_name not in (TRIGGER_STATUS, STATUS_MERGE, STATUS_CANCELLED, STATUS_DONE):
+    #    Bilingual: Jira sends English names, env may have Russian
+    from jira_client import _status_matches
+    accepted = any(
+        _status_matches(status_name, s)
+        for s in (TRIGGER_STATUS, STATUS_MERGE, STATUS_CANCELLED, STATUS_DONE)
+    )
+    if not accepted:
         return {"skipped": True, "reason": f"status={status_name}"}
 
+    # Determine which status matched (for downstream logic)
+    is_cancelled = _status_matches(status_name, STATUS_CANCELLED)
+    is_done = _status_matches(status_name, STATUS_DONE)
+    is_merge = _status_matches(status_name, STATUS_MERGE)
+
     # Отмена: убиваем все активные джобы по этой задаче
-    if status_name == STATUS_CANCELLED:
+    if is_cancelled:
         cancelled = _cancel_jobs_for_issue(issue_key)
         logger.info("Webhook cancel: %s → cancelled jobs: %s", issue_key, cancelled)
         return {"cancelled": True, "issue_key": issue_key, "jobs": cancelled}
@@ -254,11 +265,11 @@ async def webhook_jira(request: Request, secret: str = "") -> Dict[str, Any]:
     is_subtask = issue_type.lower() in ("sub-task", "subtask", "подзадача")
 
     # Merge jobs: only parent tasks, skip sub-tasks
-    if status_name == STATUS_MERGE and is_subtask:
+    if is_merge and is_subtask:
         return {"skipped": True, "reason": "merge trigger ignored for sub-tasks"}
 
     # Subtask moved to Done → trigger dependent stages
-    if is_subtask and status_name == STATUS_DONE:
+    if is_subtask and is_done:
         stage = get_stage(labels)
         if stage:
             parent_ref = fields.get("parent", {})
