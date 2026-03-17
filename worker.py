@@ -696,7 +696,7 @@ def run_code_stage(job: dict) -> None:
                 "\n⚠️ " + "; ".join(analysis["concerns"])
                 if analysis.get("concerns") else ""
             )
-            jira.transition(issue_key, STATUS_IN_REVIEW)
+            jira.transition(issue_key, STATUS_DONE)
             jira.add_comment(
                 issue_key,
                 f"🤖 PR создан: {pr['html_url']}\n"
