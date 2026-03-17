@@ -94,6 +94,8 @@ class JiraClient:
             json=body,
             timeout=10,
         )
+        if not r.is_success:
+            logger.error("create_subtask error %s: %s", r.status_code, r.text[:500])
         r.raise_for_status()
         key = r.json()["key"]
         logger.info("Created sub-task %s under %s", key, parent_key)
