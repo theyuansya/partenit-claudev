@@ -8,10 +8,10 @@ set -e
 #   Generate with: tar -czf - ~/.claude | base64 -w0
 
 if [ -n "$CLAUDE_AUTH_JSON" ]; then
-    echo "[entrypoint] Restoring ~/.claude from CLAUDE_AUTH_JSON..."
+    echo "[entrypoint] Restoring ~/.claude/.credentials.json..."
     mkdir -p /root/.claude
-    echo "$CLAUDE_AUTH_JSON" | base64 -d | tar -xzf - -C / 2>/dev/null || \
-        echo "$CLAUDE_AUTH_JSON" | base64 -d > /root/.claude/credentials.json
+    echo "$CLAUDE_AUTH_JSON" | base64 -d > /root/.claude/.credentials.json
+    chmod 600 /root/.claude/.credentials.json
     echo "[entrypoint] Done."
 fi
 
