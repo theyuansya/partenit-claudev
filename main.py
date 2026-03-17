@@ -100,8 +100,9 @@ async def webhook_jira(request: Request, secret: str = "") -> Dict[str, Any]:
         return {"skipped": True, "reason": f"type={issue_type}"}
 
     labels = fields.get("labels", [])
-    # Detect sub-tasks by parent field (reliable across all Jira locales)
-    is_subtask = bool(fields.get("parent")) or issue_type in ("Sub-task", "Подзадача")
+    # Sub-task = issue type explicitly says so (Tasks under Epics also have parent field
+    # but should be treated as parent tasks for pipeline purposes)
+    is_subtask = issue_type.lower() in ("sub-task", "subtask", "подзадача")
 
     # Merge jobs: only parent tasks, skip sub-tasks
     if status_name == STATUS_MERGE and is_subtask:
