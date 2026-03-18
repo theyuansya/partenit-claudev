@@ -65,15 +65,15 @@ def _pre_flight(stage: str, parent_key: str = "") -> str:
     )
 
     if stage in ("architecture", "development", "testing"):
-        sa_file = f"SYSTEM_ANALYSIS_{parent_key}.md" if parent_key else "SYSTEM_ANALYSIS*.md"
+        sa_file = f"docs/decisions/SYSTEM_ANALYSIS_{parent_key}.md" if parent_key else "docs/decisions/SYSTEM_ANALYSIS*.md"
         base_files += (
             f"4. **{sa_file}** — system analysis for this task "
             "(if present in the repo)\n"
         )
 
     if stage in ("development", "testing"):
-        ad_file = (f"ARCHITECTURE_DECISION_{parent_key}.md"
-                   if parent_key else "ARCHITECTURE_DECISION*.md")
+        ad_file = (f"docs/decisions/ARCHITECTURE_DECISION_{parent_key}.md"
+                   if parent_key else "docs/decisions/ARCHITECTURE_DECISION*.md")
         base_files += (
             f"5. **{ad_file}** — architecture decision for this task "
             "(if present in the repo)\n"
@@ -176,7 +176,7 @@ def build_sys_analysis_prompt(issue: dict) -> str:
         + "## What to do: System Analysis\n\n"
         "Perform a system analysis of the task. Read the code of affected "
         "components, understand the current state, and create the file "
-        f"`SYSTEM_ANALYSIS_{parent_key}.md` in the repository root.\n\n"
+        f"`docs/decisions/SYSTEM_ANALYSIS_{parent_key}.md`.\n\n"
         f"The file MUST start with exactly this header "
         f"(copy verbatim):\n\n"
         f"```\n{file_header}```\n\n"
@@ -232,7 +232,7 @@ def build_architecture_prompt(issue: dict, sys_analysis: str = "") -> str:
         + context_section
         + "## What to do: Architecture Decision\n\n"
         "Study the system analysis and current code. Create the file "
-        f"`ARCHITECTURE_DECISION_{parent_key}.md` in the repository root.\n\n"
+        f"`docs/decisions/ARCHITECTURE_DECISION_{parent_key}.md`.\n\n"
         f"The file MUST start with exactly this header "
         f"(copy verbatim):\n\n"
         f"```\n{file_header}```\n\n"
@@ -301,8 +301,8 @@ def build_development_prompt(
         "If no architecture decision exists — use the system analysis "
         "and task description as guidance.\n\n"
         "### Workflow\n"
-        f"1. Read `ARCHITECTURE_DECISION_{parent_key}.md` and "
-        f"`SYSTEM_ANALYSIS_{parent_key}.md` (if present in repo).\n"
+        f"1. Read `docs/decisions/ARCHITECTURE_DECISION_{parent_key}.md` and "
+        f"`docs/decisions/SYSTEM_ANALYSIS_{parent_key}.md` (if present).\n"
         "2. Read ARCHITECTURE.md — find related services "
         "and libraries.\n"
         "3. **Find existing code** to reuse:\n"
@@ -356,7 +356,7 @@ def build_testing_prompt(
         "just to have tests.\n\n"
         "### Step 2: Understand the changes\n"
         "1. Read the code that was changed for this task "
-        f"(see `ARCHITECTURE_DECISION_{parent_key}.md` → "
+        f"(see `docs/decisions/ARCHITECTURE_DECISION_{parent_key}.md` → "
         "section 'Implementation sequence')\n"
         "2. Look at existing tests in `tests/` — "
         "use the same patterns and fixtures\n"

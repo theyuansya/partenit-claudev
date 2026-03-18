@@ -685,9 +685,10 @@ _ARTIFACT_FILENAMES = {
 
 
 def _artifact_filename(stage: str, parent_key: str) -> str:
-    """E.g. SYSTEM_ANALYSIS_AIDEV-38.md"""
+    """E.g. docs/decisions/SYSTEM_ANALYSIS_PROJ-38.md"""
+    from config import ARTIFACTS_DIR
     base = _ARTIFACT_FILENAMES.get(stage, stage.upper())
-    return f"{base}_{parent_key}.md"
+    return f"{ARTIFACTS_DIR}/{base}_{parent_key}.md"
 
 
 def _ensure_description_text(job: dict) -> None:
@@ -788,6 +789,9 @@ def run_artifact_stage(job: dict) -> None:
             )
 
         artifact_fname = _artifact_filename(stage, parent_key)
+        # Ensure artifacts directory exists
+        from config import ARTIFACTS_DIR
+        os.makedirs(os.path.join(work_dir, ARTIFACTS_DIR), exist_ok=True)
         # Claude writes the generic name; rename to task-specific
         generic_fname = _ARTIFACT_FILENAMES.get(stage, stage.upper()) + ".md"
         generic_path = os.path.join(work_dir, generic_fname)

@@ -80,6 +80,9 @@ STAGE_PREREQUISITES: dict[str, list[str]] = {
     STAGE_TESTING: [STAGE_DEVELOPMENT],
 }
 
+# Directory for analysis/architecture artifacts (relative to repo root)
+ARTIFACTS_DIR = os.environ.get("ARTIFACTS_DIR", "docs/decisions")
+
 # Stages that write artifacts to Jira (markdown), not code
 ARTIFACT_STAGES = {STAGE_SYS_ANALYSIS, STAGE_ARCHITECTURE}
 # Stages that push code to GitHub
