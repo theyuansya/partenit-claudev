@@ -119,8 +119,8 @@ def _post_flight() -> str:
     """Checklist AFTER completing work."""
     return (
         "## After completing work\n\n"
-        "1. If you changed the project structure or added a component "
-        "— **update ARCHITECTURE.md** (if it exists).\n"
+        "1. Do NOT modify ARCHITECTURE.md, README.md, or other shared "
+        "docs — this causes merge conflicts in parallel pipelines.\n"
         "2. If you noticed tech debt — add to TECH_DEBT.md.\n"
         "3. If unclear → leave a TODO with explanation, "
         "don't guess.\n\n"
@@ -311,8 +311,8 @@ def build_development_prompt(
         "   - Do NOT create duplicates!\n"
         "4. Implement with minimal changes.\n"
         "5. Write basic tests (pytest) for the new code.\n"
-        "6. Update ARCHITECTURE.md if you added/changed a service "
-        "or endpoint.\n\n"
+        "6. Do NOT modify ARCHITECTURE.md or other shared docs "
+        "— this causes merge conflicts in parallel pipelines.\n\n"
         + _test_loop()
         + _post_flight()
     ).strip()
