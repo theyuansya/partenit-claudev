@@ -25,7 +25,7 @@ from dependency_tracker import (
 )
 from prompts import build_stage_prompt
 from config import (
-    GITHUB_TOKEN_TRUST_LAYER,
+    GITHUB_TOKEN_TARGET,
     GITHUB_REPO,
     GITHUB_TOKEN_BRIDGE,
     GITHUB_REPO_BRIDGE,
@@ -43,6 +43,7 @@ from config import (
     PIPELINE_LABEL_PREFIX,
     ALL_STAGES,
     STAGE_PREREQUISITES,
+    AUTO_TRANSITION_ON_COMPLETE,
 )
 
 logger = logging.getLogger("pipeline.worker")
@@ -55,13 +56,13 @@ github = GitHubClient()
 def _get_repo_config(job: dict) -> dict:
     """Return {"repo": ..., "token": ...} based on job labels.
 
-    If the job has label ``repo:bridge`` → bridge repo/token,
-    otherwise the default trust-layer repo/token.
+    If the job has label ``repo:bridge`` → secondary repo/token,
+    otherwise the default target repo/token.
     """
     labels = job.get("labels", [])
     if "repo:bridge" in labels:
         return {"repo": GITHUB_REPO_BRIDGE, "token": GITHUB_TOKEN_BRIDGE}
-    return {"repo": GITHUB_REPO, "token": GITHUB_TOKEN_TRUST_LAYER}
+    return {"repo": GITHUB_REPO, "token": GITHUB_TOKEN_TARGET}
 
 
 def _github_for_repo(repo_cfg: dict) -> GitHubClient:
@@ -81,7 +82,7 @@ def _github_for_repo(repo_cfg: dict) -> GitHubClient:
 def _clone_repo(work_dir: str, branch_name: str, repo_cfg: dict | None = None) -> None:
     """Clone repo and create a new local branch (no remote tracking)."""
     if repo_cfg is None:
-        repo_cfg = {"repo": GITHUB_REPO, "token": GITHUB_TOKEN_TRUST_LAYER}
+        repo_cfg = {"repo": GITHUB_REPO, "token": GITHUB_TOKEN_TARGET}
     repo_url = f"https://x-access-token:{repo_cfg['token']}@github.com/{repo_cfg['repo']}.git"
     result = subprocess.run(
         ["git", "clone", "--depth=1", repo_url, work_dir],
@@ -104,7 +105,7 @@ def _clone_repo_with_branch(work_dir: str, branch_name: str, repo_cfg: dict | No
     Otherwise create a new branch. This allows code stages to pick up
     artifacts committed by earlier artifact stages."""
     if repo_cfg is None:
-        repo_cfg = {"repo": GITHUB_REPO, "token": GITHUB_TOKEN_TRUST_LAYER}
+        repo_cfg = {"repo": GITHUB_REPO, "token": GITHUB_TOKEN_TARGET}
     repo_url = (
         f"https://x-access-token:{repo_cfg['token']}"
         f"@github.com/{repo_cfg['repo']}.git"
@@ -190,7 +191,7 @@ def _run_claude_with_retry(prompt: str, work_dir: str, job: dict) -> subprocess.
             )
             notify_error(
                 job["issue_key"], job.get("stage", "?"),
-                f"Rate limit — retry {attempt}/{MAX_RETRIES} через {RETRY_DELAY_MINUTES}м",
+                f"Rate limit — retry {attempt}/{MAX_RETRIES} in {RETRY_DELAY_MINUTES}m",
                 job.get("jira_domain", ""),
             )
             _sleep_interruptible(RETRY_DELAY_MINUTES * 60, job)
@@ -264,10 +265,10 @@ def _relaunch_subtask(sub: dict, parent_key: str, stage: str) -> None:
 # ── Setup job: create pipeline subtasks for a parent task ────────────────────
 
 _STAGE_SUMMARIES = {
-    "sys-analysis":  "Системный анализ",
-    "architecture":  "Архитектурное решение",
-    "development":   "Разработка",
-    "testing":       "Тестирование",
+    "sys-analysis":  "System Analysis",
+    "architecture":  "Architecture Decision",
+    "development":   "Development",
+    "testing":       "Testing",
 }
 
 
@@ -323,12 +324,12 @@ def run_setup_job(job: dict) -> None:
 
         jira.add_comment(
             issue_key,
-            "🤖 Pipeline подготовлен.\n"
+            "🤖 Pipeline ready.\n"
             + "\n".join(
                 f"• {_STAGE_SUMMARIES.get(s, s)}: {k}"
                 for s, k in created.items()
             )
-            + ("\n\nЭтапы без зависимостей запускаются автоматически." if created else ""),
+            + ("\n\nStages with no dependencies start automatically." if created else ""),
         )
 
         # Trigger stages with no prerequisites → transition to In Progress
@@ -371,8 +372,8 @@ def run_setup_job(job: dict) -> None:
                 logger.info("[%s] auto-started stage %s (%s)", issue_key, stage, sub["key"])
             else:
                 available = jira.get_transitions(sub["key"])
-                msg = (f"⚠️ Не могу перевести {sub['key']} в '{STATUS_IN_PROGRESS}'.\n"
-                       f"Доступные переходы: {available}")
+                msg = (f"⚠️ Cannot transition {sub['key']} to '{STATUS_IN_PROGRESS}'.\n"
+                       f"Available transitions: {available}")
                 logger.warning(msg)
                 from telegram_notifier import _send
                 _send(msg)
@@ -428,7 +429,7 @@ def run_setup_job(job: dict) -> None:
     except Exception as e:
         logger.error("[%s] setup FAIL: %s", issue_key, e)
         try:
-            jira.add_comment(issue_key, f"❌ Pipeline setup ошибка: {str(e)[:500]}\nJob: {job_id}")
+            jira.add_comment(issue_key, f"❌ Pipeline setup error: {str(e)[:500]}\nJob: {job_id}")
         except Exception:
             pass
 
@@ -450,9 +451,9 @@ def _artifact_filename(stage: str, parent_key: str) -> str:
 def _ensure_description_text(job: dict) -> None:
     """Enrich job with parent summary and description.
 
-    Subtasks only have a pipeline-generated name like "[AIDEV-38] Разработка".
-    We need the parent's actual summary ("ActionGate в robot_bridge") and
-    description to give Claude Code enough context.
+    Subtasks only have a pipeline-generated name like "[PROJ-38] Development".
+    We need the parent's actual summary and description to give Claude Code
+    enough context.
     """
     from orchestrator import parse_adf_to_text
 
@@ -487,7 +488,7 @@ def _ensure_description_text(job: dict) -> None:
                     epic_desc = epic_fields.get("description", {})
                     parts = []
                     if epic_summary:
-                        parts.append(f"Эпик: {epic_summary}")
+                        parts.append(f"Epic: {epic_summary}")
                     if epic_desc:
                         parts.append(parse_adf_to_text(epic_desc))
                     if parts:
@@ -515,7 +516,7 @@ def run_artifact_stage(job: dict) -> None:
 
     try:
         jira.transition(issue_key, STATUS_IN_PROGRESS)
-        jira.add_comment(issue_key, f"🤖 Этап {stage} начат (Claude Code). Job: {job_id}")
+        jira.add_comment(issue_key, f"🤖 Stage {stage} started (Claude Code). Job: {job_id}")
         notify_stage_started(stage, issue_key, parent_key, job.get("jira_domain", ""))
 
         auto_labels = suggest_labels(job["summary"], job.get("description_text", ""))
@@ -555,10 +556,10 @@ def run_artifact_stage(job: dict) -> None:
             with open(artifact_path, encoding="utf-8") as fh:
                 artifact_text = fh.read()
         else:
-            artifact_text = result.stdout.strip() or "Артефакт не создан — проверить вручную."
+            artifact_text = result.stdout.strip() or "Artifact not created — check manually."
             logger.warning("[%s] %s not found, using stdout", issue_key, artifact_fname)
             # Write stdout as artifact so it gets committed
-            if artifact_text and artifact_text != "Артефакт не создан — проверить вручную.":
+            if artifact_text and artifact_text != "Artifact not created — check manually.":
                 with open(artifact_path, "w", encoding="utf-8") as fh:
                     fh.write(artifact_text)
 
@@ -572,7 +573,7 @@ def run_artifact_stage(job: dict) -> None:
             subprocess.run(
                 ["git", "commit", "-m",
                  f"{parent_key}: {_STAGE_SUMMARIES.get(stage, stage)} [{stage}]\n\n"
-                 "Automated by Trust Layer Pipeline"],
+                 "Automated by Claudev"],
                 cwd=work_dir, check=True, capture_output=True,
             )
             subprocess.run(
@@ -589,15 +590,15 @@ def run_artifact_stage(job: dict) -> None:
 
         jira.add_comment(
             issue_key,
-            f"🔗 Задача: [{parent_key}]({parent_url})\n\n"
-            f"## Результат этапа: {stage}\n\n{artifact_text[:24000]}\n\n"
-            f"---\n⏱ {duration // 60}м {duration % 60}с | Job: {job_id}",
+            f"🔗 Task: [{parent_key}]({parent_url})\n\n"
+            f"## Stage result: {stage}\n\n{artifact_text[:24000]}\n\n"
+            f"---\n⏱ {duration // 60}m {duration % 60}s | Job: {job_id}",
         )
         jira.add_comment(
             parent_key,
-            f"✅ Этап **{stage}** завершён (Claude Code).\n"
+            f"✅ Stage **{stage}** complete (Claude Code).\n"
             f"📄 [{artifact_fname}]({github_url})\n"
-            f"⏱ {duration // 60}м {duration % 60}с",
+            f"⏱ {duration // 60}m {duration % 60}s",
         )
 
         jira.transition(issue_key, STATUS_DONE)
@@ -609,7 +610,7 @@ def run_artifact_stage(job: dict) -> None:
         if triggered:
             jira.add_comment(
                 issue_key,
-                f"🤖 Автоматически запущены этапы: {', '.join(triggered)}",
+                f"🤖 Automatically triggered stages: {', '.join(triggered)}",
             )
 
     except Exception as e:
@@ -618,7 +619,7 @@ def run_artifact_stage(job: dict) -> None:
         try:
             jira.add_comment(
                 issue_key,
-                f"❌ Pipeline ошибка (stage={stage}): {str(e)[:500]}\nJob: {job_id}",
+                f"❌ Pipeline error (stage={stage}): {str(e)[:500]}\nJob: {job_id}",
             )
         except Exception:
             pass
@@ -643,7 +644,7 @@ def run_code_stage(job: dict) -> None:
 
     try:
         jira.transition(issue_key, STATUS_IN_PROGRESS)
-        jira.add_comment(issue_key, f"🤖 Этап {stage} начат. Job: {job_id}")
+        jira.add_comment(issue_key, f"🤖 Stage {stage} started. Job: {job_id}")
         notify_stage_started(stage, issue_key, parent_key, job.get("jira_domain", ""))
 
         # Auto-tag issue and parent with domain/service labels
@@ -680,7 +681,7 @@ def run_code_stage(job: dict) -> None:
         if not changed:
             jira.add_comment(
                 issue_key,
-                "🤖 Claude Code не внёс изменений. Задача требует уточнения.",
+                "🤖 Claude Code made no changes. Task needs clarification.",
             )
             jira.transition(issue_key, "Ready for Dev")
             return
@@ -693,7 +694,7 @@ def run_code_stage(job: dict) -> None:
             [
                 "git", "commit", "-m",
                 f"{issue_key}: {job['summary']} [{stage}]\n\n"
-                "Automated by Trust Layer Pipeline",
+                "Automated by Claudev",
             ],
             cwd=work_dir, check=True, capture_output=True,
         )
@@ -711,10 +712,10 @@ def run_code_stage(job: dict) -> None:
                 f"## {issue_key}: {job['summary']}\n\n"
                 f"**Jira:** https://{jira_domain}/browse/{parent_key}\n"
                 f"**Subtask:** {issue_key} (stage: {stage})\n"
-                "**Automated by:** Trust Layer Pipeline\n\n"
-                f"### Что сделано\n{analysis.get('summary_ru', 'N/A')}\n\n"
-                f"### Файлы\n{files_list}\n\n"
-                f"### Тесты: {analysis.get('tests_status', '?')}\n"
+                "**Automated by:** Claudev\n\n"
+                f"### Changes\n{analysis.get('summary_ru', 'N/A')}\n\n"
+                f"### Files\n{files_list}\n\n"
+                f"### Tests: {analysis.get('tests_status', '?')}\n"
             )
             gh = _github_for_repo(repo_cfg)
             pr = gh.create_pr(
@@ -734,10 +735,10 @@ def run_code_stage(job: dict) -> None:
             jira.transition(issue_key, STATUS_DONE)
             jira.add_comment(
                 issue_key,
-                f"🤖 PR создан: {pr['html_url']}\n"
-                f"Файлов: {len(changed)} | "
-                f"Тесты: {analysis.get('tests_status', '?')} | "
-                f"Время: {duration // 60}м {duration % 60}с\n"
+                f"🤖 PR created: {pr['html_url']}\n"
+                f"Files: {len(changed)} | "
+                f"Tests: {analysis.get('tests_status', '?')} | "
+                f"Duration: {duration // 60}m {duration % 60}s\n"
                 f"{analysis.get('summary_ru', '')}{concerns}",
             )
             logger.info("[%s] Done! PR #%s", issue_key, pr["number"])
@@ -746,21 +747,25 @@ def run_code_stage(job: dict) -> None:
             jira.transition(issue_key, STATUS_DONE)
             jira.add_comment(
                 issue_key,
-                f"🤖 Тесты написаны и запушены в {branch_name}.\n"
-                f"Файлов: {len(changed)} | "
-                f"Статус: {analysis.get('tests_status', '?')} | "
-                f"Время: {duration // 60}м {duration % 60}с\n"
+                f"🤖 Tests written and pushed to {branch_name}.\n"
+                f"Files: {len(changed)} | "
+                f"Status: {analysis.get('tests_status', '?')} | "
+                f"Duration: {duration // 60}m {duration % 60}s\n"
                 f"{analysis.get('summary_ru', '')}",
             )
             notify_testing_done(issue_key, parent_key, job.get("jira_domain", ""), duration)
             logger.info("[%s] Testing stage done (%ds)", issue_key, duration)
 
         if all_stages_done(parent_key, jira):
+            # Auto-transition parent to In Review / Ready for Test
+            if AUTO_TRANSITION_ON_COMPLETE:
+                jira.transition(parent_key, AUTO_TRANSITION_ON_COMPLETE)
+                logger.info("[%s] auto-transitioned → %s", parent_key, AUTO_TRANSITION_ON_COMPLETE)
             jira.add_comment(
                 parent_key,
-                "🎉 Все этапы pipeline завершены!\n"
+                "🎉 All pipeline stages complete!\n"
                 "sys-analysis ✅ | architecture ✅ | development ✅ | testing ✅\n"
-                "Задача готова к ревью.",
+                "Task is ready for review.",
             )
             notify_all_done(parent_key, job.get("jira_domain", ""))
 
@@ -768,7 +773,7 @@ def run_code_stage(job: dict) -> None:
         if triggered:
             jira.add_comment(
                 issue_key,
-                f"🤖 Автоматически запущены этапы: {', '.join(triggered)}",
+                f"🤖 Automatically triggered stages: {', '.join(triggered)}",
             )
 
     except Exception as e:
@@ -777,7 +782,7 @@ def run_code_stage(job: dict) -> None:
         try:
             jira.add_comment(
                 issue_key,
-                f"❌ Pipeline ошибка (stage={stage}): {str(e)[:500]}\nJob: {job_id}",
+                f"❌ Pipeline error (stage={stage}): {str(e)[:500]}\nJob: {job_id}",
             )
         except Exception:
             pass
@@ -804,7 +809,7 @@ def _create_stage_to_main_pr(gh: GitHubClient, issue_key: str, summary: str) -> 
             body=(
                 f"## Auto-release from `{STAGE_BRANCH}` → `main`\n\n"
                 f"Triggered by merge of {issue_key}: {summary}\n\n"
-                "Created automatically by Trust Layer Pipeline."
+                "Created automatically by Claudev."
             ),
         )
         logger.info("[%s] created stage→main PR #%s: %s",
@@ -814,9 +819,9 @@ def _create_stage_to_main_pr(gh: GitHubClient, issue_key: str, summary: str) -> 
 
 
 def run_merge_job(job: dict) -> None:
-    """Triggered when parent task moves to STATUS_MERGE ('На мерж').
+    """Triggered when parent task moves to STATUS_MERGE ('Ready to Merge').
 
-    Finds the open PR for feature/<issue_key>, merges it into main,
+    Finds the open PR for feature/<issue_key>, merges it into stage,
     then transitions Jira task to Done.
     """
     issue_key = job["issue_key"]
@@ -831,8 +836,8 @@ def run_merge_job(job: dict) -> None:
         if not pr:
             jira.add_comment(
                 issue_key,
-                f"⚠️ Pipeline: не найден открытый PR для ветки `{branch_name}`. "
-                "Смерджите вручную.",
+                f"⚠️ Pipeline: no open PR found for branch `{branch_name}`. "
+                "Please merge manually.",
             )
             return
 
@@ -851,7 +856,7 @@ def run_merge_job(job: dict) -> None:
         jira.transition(issue_key, STATUS_DONE)
         jira.add_comment(
             issue_key,
-            f"🎉 Смерджено в `{pr['base']['ref']}`!\n"
+            f"🎉 Merged into `{pr['base']['ref']}`!\n"
             f"PR: {pr_url}\n"
             f"Commit: {merge_result.get('sha', '')[:8]}",
         )
@@ -869,8 +874,8 @@ def run_merge_job(job: dict) -> None:
         try:
             jira.add_comment(
                 issue_key,
-                f"❌ Авто-мердж не удался: {str(e)[:400]}\n"
-                "Смерджите PR вручную и переведите задачу в Done.",
+                f"❌ Auto-merge failed: {str(e)[:400]}\n"
+                "Please merge the PR manually and move the task to Done.",
             )
         except Exception:
             pass
@@ -915,7 +920,7 @@ def _run_legacy_job(job: dict) -> None:
 
     try:
         jira.transition(issue_key, "In Progress")
-        jira.add_comment(issue_key, f"🤖 Pipeline начал работу. Job: {job_id}")
+        jira.add_comment(issue_key, f"🤖 Pipeline started. Job: {job_id}")
 
         description_text = parse_adf_to_text(job.get("description", ""))
         issue = {
@@ -946,7 +951,7 @@ def _run_legacy_job(job: dict) -> None:
         if not changed:
             jira.add_comment(
                 issue_key,
-                "🤖 Claude Code не внёс изменений. Задача требует уточнения.",
+                "🤖 Claude Code made no changes. Task needs clarification.",
             )
             jira.transition(issue_key, "Ready for Dev")
             return
@@ -957,7 +962,7 @@ def _run_legacy_job(job: dict) -> None:
         subprocess.run(
             [
                 "git", "commit", "-m",
-                f"{issue_key}: {issue['summary']}\n\nAutomated by Trust Layer Pipeline",
+                f"{issue_key}: {issue['summary']}\n\nAutomated by Claudev",
             ],
             cwd=work_dir, check=True, capture_output=True,
         )
@@ -973,10 +978,10 @@ def _run_legacy_job(job: dict) -> None:
         pr_body = (
             f"## {issue_key}: {issue['summary']}\n\n"
             f"**Jira:** https://{jira_domain}/browse/{issue_key}\n"
-            "**Automated by:** Trust Layer Pipeline\n\n"
-            f"### Что сделано\n{analysis.get('summary_ru', 'N/A')}\n\n"
-            f"### Файлы\n{files_list}\n\n"
-            f"### Тесты: {analysis.get('tests_status', '?')}\n"
+            "**Automated by:** Claudev\n\n"
+            f"### Changes\n{analysis.get('summary_ru', 'N/A')}\n\n"
+            f"### Files\n{files_list}\n\n"
+            f"### Tests: {analysis.get('tests_status', '?')}\n"
         )
         pr = github.create_pr(
             head=branch_name,
@@ -993,10 +998,10 @@ def _run_legacy_job(job: dict) -> None:
         jira.transition(issue_key, "In Review")
         jira.add_comment(
             issue_key,
-            f"🤖 PR создан: {pr['html_url']}\n"
-            f"Файлов: {len(changed)} | "
-            f"Тесты: {analysis.get('tests_status', '?')} | "
-            f"Время: {duration // 60}м {duration % 60}с\n"
+            f"🤖 PR created: {pr['html_url']}\n"
+            f"Files: {len(changed)} | "
+            f"Tests: {analysis.get('tests_status', '?')} | "
+            f"Duration: {duration // 60}m {duration % 60}s\n"
             f"{analysis.get('summary_ru', '')}{concerns}",
         )
         logger.info("[%s] Done! PR #%s", issue_key, pr["number"])
@@ -1006,7 +1011,7 @@ def _run_legacy_job(job: dict) -> None:
         try:
             jira.add_comment(
                 issue_key,
-                f"❌ Pipeline ошибка: {str(e)[:500]}\nJob: {job_id}",
+                f"❌ Pipeline error: {str(e)[:500]}\nJob: {job_id}",
             )
         except Exception:
             pass

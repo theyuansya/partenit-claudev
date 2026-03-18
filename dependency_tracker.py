@@ -125,8 +125,8 @@ def trigger_next_stages(
         jira.transition(info["key"], STATUS_IN_PROGRESS)
         jira.add_comment(
             info["key"],
-            f"🤖 Все предпосылки выполнены ({', '.join(prereqs)} → Done). "
-            f"Этап {stage} запущен автоматически.",
+            f"🤖 All prerequisites met ({', '.join(prereqs)} → Done). "
+            f"Stage {stage} started automatically.",
         )
         triggered.append(stage)
 

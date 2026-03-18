@@ -12,6 +12,7 @@ from config import (
     PORT, WEBHOOK_SECRET, TRIGGER_STATUS, MAX_CONCURRENT_JOBS,
     MAX_CONCURRENT_PIPELINES, JIRA_DOMAIN,
     STATUS_MERGE, STATUS_CANCELLED, STATUS_IN_REVIEW, STATUS_DONE,
+    AUTO_TRANSITION_ON_COMPLETE,
 )
 from dependency_tracker import get_stage
 
@@ -21,7 +22,7 @@ logging.basicConfig(
 )
 logger = logging.getLogger("pipeline")
 
-app = FastAPI(title="Trust Layer Dev Pipeline")
+app = FastAPI(title="Claudev")
 
 # In-memory job store
 jobs: Dict[str, Dict[str, Any]] = {}
@@ -156,8 +157,8 @@ def _try_start_queued_pipeline() -> None:
             try:
                 from telegram_notifier import _send
                 wait_time = int(time.time() - queued_job.get("created", time.time()))
-                _send(f"🚀 {parent_key} стартует из очереди "
-                      f"(ждал {wait_time // 60}м {wait_time % 60}с)")
+                _send(f"🚀 {parent_key} starting from queue "
+                      f"(waited {wait_time // 60}m {wait_time % 60}s)")
             except Exception:
                 pass
 
@@ -220,13 +221,13 @@ def _launch_job(job: Dict[str, Any]) -> None:
 
 @app.post("/webhook/jira")
 async def webhook_jira(request: Request, secret: str = "") -> Dict[str, Any]:
-    # 1. Проверить secret
+    # 1. Verify secret
     if secret != WEBHOOK_SECRET:
         raise HTTPException(403, "Invalid secret")
 
     body = await request.json()
 
-    # 2. Извлечь данные
+    # 2. Extract data
     issue = body.get("issue", {})
     fields = issue.get("fields", {})
     issue_key = issue.get("key", "")
@@ -235,7 +236,7 @@ async def webhook_jira(request: Request, secret: str = "") -> Dict[str, Any]:
 
     logger.info("Webhook: key=%s type=%r status=%r", issue_key, issue_type, status_name)
 
-    # 3. Фильтр — принимаем TRIGGER_STATUS, STATUS_MERGE, STATUS_CANCELLED, STATUS_DONE
+    # 3. Filter — accept TRIGGER_STATUS, STATUS_MERGE, STATUS_CANCELLED, STATUS_DONE
     #    Bilingual: Jira sends English names, env may have Russian
     from jira_client import _status_matches
     accepted = any(
@@ -250,7 +251,7 @@ async def webhook_jira(request: Request, secret: str = "") -> Dict[str, Any]:
     is_done = _status_matches(status_name, STATUS_DONE)
     is_merge = _status_matches(status_name, STATUS_MERGE)
 
-    # Отмена: убиваем все активные джобы по этой задаче
+    # Cancellation: kill all active jobs for this issue
     if is_cancelled:
         cancelled = _cancel_jobs_for_issue(issue_key)
         logger.info("Webhook cancel: %s → cancelled jobs: %s", issue_key, cancelled)
@@ -282,15 +283,24 @@ async def webhook_jira(request: Request, secret: str = "") -> Dict[str, Any]:
                 triggered = trigger_next_stages(parent_key, stage, _jira)
                 logger.info("Subtask %s Done → triggered: %s", issue_key, triggered)
 
-                # Check if ALL stages are done → notify
+                # Check if ALL stages are done → auto-transition + notify
                 if not triggered and all_stages_done(parent_key, _jira):
+                    # Auto-transition parent to In Review / Ready for Test
+                    if AUTO_TRANSITION_ON_COMPLETE:
+                        ok = _jira.transition(parent_key, AUTO_TRANSITION_ON_COMPLETE)
+                        if ok:
+                            logger.info("Auto-transitioned %s → %s",
+                                        parent_key, AUTO_TRANSITION_ON_COMPLETE)
+                        else:
+                            logger.warning("Failed to auto-transition %s → %s",
+                                           parent_key, AUTO_TRANSITION_ON_COMPLETE)
                     _jira.add_comment(
                         parent_key,
-                        "🎉 Все этапы pipeline завершены!\n"
+                        "🎉 All pipeline stages complete!\n"
                         "sys-analysis ✅ | architecture ✅ | "
                         "development ✅ | testing ✅\n"
-                        "Задача готова к ревью. Переведи в "
-                        "'Ready to Merge' для авто-мерджа.",
+                        "Task is ready for review. Move to "
+                        "'Ready to Merge' for auto-merge.",
                     )
                     jira_domain = f"{JIRA_DOMAIN}.atlassian.net"
                     notify_all_done(parent_key, jira_domain)
@@ -324,7 +334,7 @@ async def webhook_jira(request: Request, secret: str = "") -> Dict[str, Any]:
         parent_ref = fields.get("parent", {})
         parent_key = parent_ref.get("key", issue_key)
 
-    # 4. Создать job
+    # 4. Create job
     job_id = str(uuid.uuid4())[:8]
     job = {
         "job_id": job_id,
@@ -364,9 +374,9 @@ async def webhook_jira(request: Request, secret: str = "") -> Dict[str, Any]:
                     active_list = ", ".join(active_pipelines)
                     jira.add_comment(
                         issue_key,
-                        f"⏳ Задача поставлена в очередь (позиция {len(pipeline_queue)}).\n"
-                        f"Активные пайплайны: {active_list}\n"
-                        "Задача стартует автоматически, когда освободится слот.",
+                        f"⏳ Task queued (position {len(pipeline_queue)}).\n"
+                        f"Active pipelines: {active_list}\n"
+                        "Will start automatically when a slot opens up.",
                     )
                 except Exception:
                     pass
@@ -388,9 +398,19 @@ async def webhook_jira(request: Request, secret: str = "") -> Dict[str, Any]:
         with lock:
             active_pipelines.add(parent_key)
 
-    # 6. Запустить worker
+    # 6. Launch worker
     _launch_job(job)
     return {"accepted": True, "job_id": job_id, "issue_key": issue_key}
+
+
+# ── Telegram bot webhook ──────────────────────────────────────────────────────
+
+@app.post("/webhook/telegram")
+async def webhook_telegram(request: Request) -> Dict[str, Any]:
+    """Receive Telegram bot updates (set via setWebhook API)."""
+    body = await request.json()
+    from telegram_notifier import handle_telegram_update
+    return handle_telegram_update(body)
 
 
 if __name__ == "__main__":  # pragma: no cover

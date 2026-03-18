@@ -1,8 +1,25 @@
-# Trust Layer Pipeline
+<p align="center">
+  <img src="partenit.png" alt="Partenit" width="320">
+</p>
 
-Automated development pipeline: Jira task → Claude Code → GitHub PR → auto-merge → Done.
+<h1 align="center">Claudev</h1>
 
-When you move a task to **In Progress**, the pipeline takes over: it creates subtasks, runs system analysis and architecture design, writes code, writes tests, opens a PR. When you approve and move to **Ready to Merge** — it merges automatically.
+<p align="center">
+  <strong>Jira task → Claude Code → GitHub PR → auto-merge → Done</strong><br>
+  Fully automated 4-stage development pipeline powered by AI
+</p>
+
+<p align="center">
+  <a href="#quick-start">Quick Start</a> &bull;
+  <a href="#how-it-works">How it Works</a> &bull;
+  <a href="#setup">Setup</a> &bull;
+  <a href="#telegram-bot">Telegram Bot</a> &bull;
+  <a href="#deploy-to-railway">Deploy</a>
+</p>
+
+---
+
+Move a Jira task to **In Progress** and the pipeline takes over: creates subtasks, runs system analysis and architecture design via Claude Code, writes code, writes tests, and opens a PR. When you approve and move to **Ready to Merge** — it merges automatically.
 
 ---
 
@@ -10,195 +27,213 @@ When you move a task to **In Progress**, the pipeline takes over: it creates sub
 
 ```
 You create a task with business requirements
-           │
-           ▼
-    ┌─────────────┐
-    │   To Do     │  You write the description
-    └──────┬──────┘
-           │  you move it
-           ▼
-    ┌─────────────┐
-    │ In Progress │ ◄── 🤖 TRIGGER: pipeline starts
-    └──────┬──────┘
-           │
-           │  🤖 DeepSeek suggests labels (service:, domain:, lib:)
-           │  🤖 Creates 4 subtasks automatically:
-           │
-           ├──► [TASK-X] System Analysis    (pipeline:sys-analysis)
-           │         └─ 🤖 Claude Code reads codebase → writes SYSTEM_ANALYSIS.md
-           │
-           ├──► [TASK-X] Architecture       (pipeline:architecture)
-           │         └─ 🤖 Claude Code designs solution → writes ARCHITECTURE_DECISION.md
-           │
-           │  (both run in parallel, no dependencies between them)
-           │
-           ▼  when both are Done ↓
-           │
-           ├──► [TASK-X] Development        (pipeline:development)
-           │         └─ 🤖 Claude Code writes code using both artifacts
-           │            → git commit → opens PR to `stage` branch
-           │
-           ▼  when Development is Done ↓
-           │
-           ├──► [TASK-X] Testing            (pipeline:testing)
-                     └─ 🤖 Claude Code writes tests → pushes to branch
-                        → subtask marked Done
-           │
-           ▼
-    ┌─────────────┐
-    │  In Review  │ ◄── 🤖 Pipeline moves here after PR is created
-    └──────┬──────┘
-           │  you review the PR on GitHub
-           ▼
-    ┌──────────────────┐
-    │  Ready for Test  │  👤 You move here after approving the code
-    └────────┬─────────┘
-             │  you test the feature
-             ▼
-    ┌──────────────┐
-    │  In Testing  │  👤 You move here while testing
-    └──────┬───────┘
-           │  tests pass
-           ▼
-    ┌──────────────────┐
-    │ Ready to Merge   │  👤 You move here  ◄── 🤖 TRIGGER: auto-merge
-    └────────┬─────────┘
-             │  🤖 Pipeline finds the PR, squash-merges into main
-             ▼
-    ┌──────────┐
-    │   Done   │ ◄── 🤖 Pipeline moves here after successful merge
-    └──────────┘
+           |
+           v
+    +-------------+
+    |   To Do     |  You write the description
+    +------+------+
+           |  you move it (or use /new in Telegram)
+           v
+    +-------------+
+    | In Progress | <-- TRIGGER: pipeline starts
+    +------+------+
+           |
+           |  LLM suggests labels (service:, domain:, lib:)
+           |  Creates 4 subtasks automatically:
+           |
+           +-->  System Analysis        (pipeline:sys-analysis)
+           |         \-- Claude Code reads codebase -> SYSTEM_ANALYSIS.md
+           |
+           +-->  Architecture           (pipeline:architecture)
+           |         \-- Claude Code designs solution -> ARCHITECTURE_DECISION.md
+           |
+           |  (both run in parallel, no dependencies)
+           |
+           v  when both Done:
+           |
+           +-->  Development            (pipeline:development)
+           |         \-- Claude Code writes code -> PR to stage branch
+           |
+           v  when Development Done:
+           |
+           +-->  Testing                (pipeline:testing)
+           |         \-- Claude Code writes tests -> pushes to branch
+           |
+           v  all subtasks Done
+    +-------------+
+    |  In Review  | <-- Auto-transitioned when all stages complete
+    +------+------+
+           |  you review the PR on GitHub
+           v
+    +------------------+
+    |  Ready to Merge  |  You move here -> auto-merge
+    +--------+---------+
+             v
+    +----------+
+    |   Done   | <-- Pipeline sets after merge
+    +----------+
 ```
 
----
+### Technology split
 
-## Jira statuses
+| Tool | Role | Cost |
+|------|------|------|
+| **Claude Code** (Max subscription) | All intellectual work: analysis, architecture, code, tests | Included in Max sub |
+| **Orchestrator LLM** (configurable) | Lightweight tasks: parse Jira descriptions, classify issues, suggest labels, summarize output | ~$0.01-0.05 per run |
 
-| Status | Who | Action |
-|--------|-----|--------|
-| **To Do** | You | Task is in backlog |
-| **In Progress** | You → 🤖 | You move it → pipeline starts |
-| **In Review** | 🤖 | Pipeline sets this after opening PR |
-| **Ready for Test** | You | Code review passed, ready to test |
-| **In Testing** | You | You are testing the feature |
-| **Ready to Merge** | You → 🤖 | Testing passed, you move it → pipeline merges |
-| **Done** | 🤖 | Pipeline sets this after successful merge |
-
-**Important:** create all statuses with these exact English names in Jira. The pipeline matches by name.
+The orchestrator LLM can be **any OpenAI-compatible API**: DeepSeek, GPT-4o-mini, Groq, Together, Ollama, etc. Use whatever is cheapest — these tasks don't need a powerful model.
 
 ---
 
-## Telegram notifications
+## Quick start
 
-The pipeline sends you a message when:
-
-| Event | Message |
-|-------|---------|
-| 📊 System analysis ready | Artifact posted to Jira subtask |
-| 🏗 Architecture ready | Artifact posted to Jira subtask |
-| 🔀 PR created | Link to PR + file count |
-| ✅ All stages done | Task ready for your review |
-| 🚀 Merged | Squash-merged into main → Done |
-| ❌ Error | Stage name + error message |
-
----
-
-## Technology split
-
-| Tool | Role |
-|------|------|
-| **Claude Code** (Pro subscription) | All intellectual work: analysis, architecture, code, tests |
-| **DeepSeek** | Pipeline orchestration only: parse Jira description, classify task type, suggest labels, summarize git diff for PR |
+```bash
+git clone https://github.com/GradeBuilderSL/partenit-claudev.git
+cd partenit-claudev
+cp .env.example .env
+# Edit .env — see sections below
+docker compose up --build
+```
 
 ---
 
 ## Setup
 
-### 1. Environment variables
+### 1. Claude Code authentication
 
-Copy `.env.example` to `.env` and fill in:
+The pipeline uses Claude Code CLI with a **Max subscription** (not API keys).
 
-```bash
-cp .env.example .env
-```
+1. Install Claude Code: `npm install -g @anthropic-ai/claude-code`
+2. Run `claude` once and complete the login flow in your browser
+3. This creates `~/.claude/.credentials.json`
+4. For cloud deployment, base64-encode it:
 
-| Variable | Description |
-|----------|-------------|
-| `CLAUDE_AUTH_JSON` | Base64 of `~/.claude/.credentials.json` — Claude Code auth |
-| `DEEPSEEK_API_KEY` | DeepSeek API key |
-| `JIRA_DOMAIN` | Subdomain only: `mycompany` for `mycompany.atlassian.net` |
-| `JIRA_EMAIL` | Your Jira account email |
-| `JIRA_API_TOKEN` | Jira API token from id.atlassian.com |
-| `JIRA_PROJECT_KEY` | Project key, e.g. `TRUST` |
-| `GITHUB_TOKEN` | Fine-grained token for the **pipeline** repo (trust-layer-pipeline) |
-| `GITHUB_TOKEN_TRUST_LAYER` | Fine-grained token for the **target** repo (trust-layer) — clone + PR |
-| `GITHUB_REPO` | `owner/repo` of the target repo (trust-layer) |
-| `WEBHOOK_SECRET` | Random string — same value in Jira webhook URL |
-| `TELEGRAM_BOT_TOKEN` | From @BotFather |
-| `TELEGRAM_CHAT_ID` | Your chat ID |
-
-Status variables (only change if your Jira workflow uses different names):
-
-```
-STATUS_TODO=To Do
-STATUS_IN_PROGRESS=In Progress
-STATUS_IN_REVIEW=In Review
-STATUS_READY_FOR_TEST=Ready for Test
-STATUS_IN_TESTING=In Testing
-STATUS_MERGE=Ready to Merge
-STATUS_DONE=Done
-STATUS_CANCELLED=Cancelled
-```
-
-Retry and timeout settings:
-
-```
-MAX_RETRIES=3               # how many times to retry on rate limit
-RETRY_DELAY_MINUTES=10      # minutes to wait between retries
-JOB_TIMEOUT_MINUTES=60      # max total runtime per Claude Code call
-```
-
-### 2. Claude Code auth
-
-On your machine:
 ```bash
 base64 -w0 ~/.claude/.credentials.json
 ```
-Paste the output as `CLAUDE_AUTH_JSON`.
+
+5. Set the result as `CLAUDE_AUTH_JSON` in your `.env` or Railway variables
+
+> **Local Docker:** Skip `CLAUDE_AUTH_JSON` — `docker-compose.yml` mounts `~/.claude` directly.
+
+### 2. Orchestrator LLM
+
+Any OpenAI-compatible API works. Set three variables:
+
+| Provider | `LLM_BASE_URL` | `LLM_MODEL` | Cost |
+|----------|----------------|-------------|------|
+| **DeepSeek** (default) | `https://api.deepseek.com` | `deepseek-chat` | ~$0.01/run |
+| **OpenAI** | `https://api.openai.com` | `gpt-4o-mini` | ~$0.02/run |
+| **Groq** (free tier) | `https://api.groq.com/openai` | `llama-3.1-70b-versatile` | Free |
+| **Together** | `https://api.together.xyz` | `meta-llama/Llama-3-70b-chat-hf` | ~$0.01/run |
+| **Ollama** (local) | `http://localhost:11434` | `llama3.1` | Free |
+
+Set `LLM_API_KEY` with the API key for your chosen provider.
+
+> Backward compatible: `DEEPSEEK_API_KEY` / `DEEPSEEK_BASE_URL` still work if `LLM_*` vars aren't set.
 
 ### 3. GitHub token
 
-Go to **github.com → Settings → Developer settings → Personal access tokens → Fine-grained tokens**.
+**github.com → Settings → Developer settings → Fine-grained personal access tokens**
 
-Required permissions for your repository:
-- **Contents** — Read and write
-- **Pull requests** — Read and write
-- **Metadata** — Read (set automatically)
+Required permissions for the target repository:
 
-### 4. Jira webhook
+| Permission | Access |
+|-----------|--------|
+| **Contents** | Read and write |
+| **Pull requests** | Read and write |
+| **Metadata** | Read (auto-selected) |
 
-Go to **Settings → System → Webhooks → Create webhook**:
+### 4. Jira API token
 
-- **URL:** `https://your-domain/webhook/jira?secret=YOUR_WEBHOOK_SECRET`
-- **Events:** Issue → `updated` and `created`
-- **JQL filter:** `project = TRUST` ← limits to your project only, other boards are ignored
+1. Go to [id.atlassian.com/manage-profile/security/api-tokens](https://id.atlassian.com/manage-profile/security/api-tokens)
+2. Create a new API token
+3. Set `JIRA_EMAIL` and `JIRA_API_TOKEN`
 
-### 5. Deploy to Railway
+### 5. Jira workflow (statuses)
 
-Push to GitHub → connect repo in Railway → add all variables in the **Variables** tab.
+The pipeline matches Jira statuses **by name**. You need these statuses in your workflow:
 
-Railway sets `PORT` automatically — do not set it manually.
+| Status | Required? | Default name | Purpose |
+|--------|-----------|-------------|---------|
+| Backlog / To Do | Yes | `To Do` | Task is waiting |
+| In Progress | **Yes** | `In Progress` | **Trigger** — pipeline starts here |
+| In Review | Recommended | `In Review` | Auto-set when all stages complete |
+| Ready for Test | Optional | `Ready for Test` | You move here after code review |
+| In Testing | Optional | `In Testing` | You're testing the feature |
+| Ready to Merge | **Yes** | `Ready to Merge` | **Trigger** — pipeline auto-merges |
+| Done | **Yes** | `Done` | Auto-set after merge |
+| Cancelled | Recommended | `Cancelled` | Stops the pipeline immediately |
+
+**Don't want all these columns?** You only need: **To Do → In Progress → Ready to Merge → Done**. The others are optional review steps.
+
+**Using different names?** Override them in `.env`:
+```
+STATUS_IN_PROGRESS=Working
+STATUS_MERGE=Merge Me
+STATUS_DONE=Completed
+```
+
+The pipeline also understands Russian status names automatically (e.g., "В работе", "Готово", "Отменено").
+
+### 6. Jira webhook
+
+**Project Settings → System → Webhooks → Create webhook**:
+
+- **URL:** `https://your-app.up.railway.app/webhook/jira?secret=YOUR_WEBHOOK_SECRET`
+- **Events:** Issue → `updated`
+- **JQL filter:** `project = MYPROJECT`
+
+---
+
+## Telegram bot
+
+For notifications + interactive commands:
+
+1. Open Telegram → **@BotFather** → `/newbot` → get the **bot token**
+2. Set `TELEGRAM_BOT_TOKEN` and `TELEGRAM_CHAT_ID` in `.env`
+3. **Set the webhook** (run once after deploying):
+
+```bash
+curl "https://api.telegram.org/bot<YOUR_TOKEN>/setWebhook?url=https://your-app.up.railway.app/webhook/telegram"
+```
+
+### Bot commands
+
+| Command | Description |
+|---------|-------------|
+| `/new Fix login timeout` | Create a Jira task and start the pipeline immediately |
+| `/start PROJ-123` | Move an existing task to In Progress |
+| `/cancel PROJ-123` | Cancel a running pipeline |
+| `/status` | Show active pipelines and queue |
+| `/status PROJ-123` | Show task status with all stage progress |
+| `/help` | List available commands |
+
+`/new` is the fastest way to get something into the pipeline — one message in Telegram and Claude Code starts working on it.
+
+---
+
+## Deploy to Railway
+
+1. Push this repo to GitHub
+2. [railway.app](https://railway.app) → **New Project → Deploy from GitHub repo**
+3. Select your repo
+4. Go to the **Variables** tab and add all variables from `.env.example`
+   - Railway sets `PORT` automatically — **do not set it**
+   - Set `CLAUDE_AUTH_JSON` with the base64-encoded credentials
+5. Copy the generated URL for Jira and Telegram webhooks
+6. Railway builds from the `Dockerfile` and deploys automatically
+
+**Health check:** `GET /health` — monitored automatically.
 
 ---
 
 ## Local run with Docker
 
 ```bash
-# Mount your ~/.claude for Max subscription auth
 docker compose up --build
 ```
 
-Check:
 ```bash
 curl http://localhost:8090/health
 # {"status":"ok","active_jobs":0,"total_jobs":0}
@@ -206,70 +241,142 @@ curl http://localhost:8090/health
 
 ---
 
-## Monitor jobs
+## Concurrency and rate limits
+
+### Pipeline concurrency
+
+| Setting | Default | Description |
+|---------|---------|-------------|
+| `MAX_CONCURRENT_PIPELINES` | `1` | How many parent tasks can run through the pipeline simultaneously. Others are queued FIFO. |
+| `MAX_CONCURRENT_JOBS` | `3` | Max simultaneous Claude Code processes (across all pipelines). |
+
+With `MAX_CONCURRENT_PIPELINES=1`, one task goes through all 4 stages before the next starts. Set to `2+` if you have a higher-tier Claude subscription.
+
+### Timeouts and retries
+
+| Setting | Default | Description |
+|---------|---------|-------------|
+| `JOB_TIMEOUT_MINUTES` | `60` | Max runtime for a single Claude Code call. Kill after this. |
+| `MAX_RETRIES` | `3` | How many times to retry on rate limit (429) errors. |
+| `RETRY_DELAY_MINUTES` | `10` | Minutes to wait between retries. |
+
+### Rate limit handling
+
+If Claude Code hits subscription rate limits, the pipeline **automatically waits and retries**:
+
+- Detects rate limits by error text (`rate limit`, `429`, `overloaded`)
+- Waits `RETRY_DELAY_MINUTES` between attempts
+- Sends a Telegram notification on each retry
+- If all attempts fail — marks the task as error in Jira
+
+Progress within a single attempt is not preserved — Claude Code restarts from the same prompt.
+
+### Queue behavior
+
+When `MAX_CONCURRENT_PIPELINES` is reached:
+- New tasks are queued with a Jira comment showing queue position
+- When a slot opens, the next task starts automatically
+- Telegram notifies when a queued task starts (with wait time)
+
+---
+
+## Auto-transition
+
+When all 4 pipeline subtasks reach **Done**, the parent task is automatically moved to the status defined by `AUTO_TRANSITION_ON_COMPLETE` (default: `In Review`).
+
+Set it to match your workflow:
+```
+AUTO_TRANSITION_ON_COMPLETE=In Review          # default
+AUTO_TRANSITION_ON_COMPLETE=Ready for Test     # if you want to test first
+AUTO_TRANSITION_ON_COMPLETE=                   # empty = disabled, you move it manually
+```
+
+---
+
+## Cancellation
+
+**Via Jira:** Move the task or subtask to **Cancelled** — pipeline stops immediately, kills Claude Code process, no changes pushed.
+
+**Via Telegram:** `/cancel PROJ-123`
+
+**Via API:** `curl -X POST https://your-domain/jobs/<job_id>/cancel`
+
+---
+
+## Monitoring
 
 ```bash
-# All recent jobs
-curl https://your-domain/jobs | python3 -m json.tool
-
-# Specific job
-curl https://your-domain/jobs/<job_id>
+curl https://your-domain/health     # Health + active/queued pipelines
+curl https://your-domain/jobs       # Recent jobs (last 20)
+curl https://your-domain/jobs/<id>  # Specific job details
+curl https://your-domain/queue      # Pipeline queue
 ```
+
+Or use `/status` in Telegram.
 
 ---
 
-## Rate limit retry
+## Environment variables
 
-Если Claude Code упирается в лимиты подписки во время генерации, пайплайн **автоматически ждёт и повторяет** попытку.
+### Required
 
-Поведение:
-- Детектирует rate limit по тексту ошибки (`rate limit`, `429`, `overloaded`, `exceeded your current quota`)
-- Ждёт `RETRY_DELAY_MINUTES` (по умолчанию 10 мин) и пробует снова
-- Максимум `MAX_RETRIES` попыток (по умолчанию 3)
-- На каждую retry — уведомление в Telegram
-- Если все попытки исчерпаны — задача помечается как ошибка в Jira
+| Variable | Description |
+|----------|-------------|
+| `WEBHOOK_SECRET` | Random string — same value in Jira webhook URL |
+| `LLM_API_KEY` | API key for the orchestrator LLM |
+| `JIRA_DOMAIN` | Subdomain only: `mycompany` for `mycompany.atlassian.net` |
+| `JIRA_EMAIL` | Your Jira account email |
+| `JIRA_API_TOKEN` | Jira API token |
+| `JIRA_PROJECT_KEY` | Project key, e.g. `MYPROJECT` |
+| `GITHUB_TOKEN` | GitHub token for pipeline operations |
+| `GITHUB_TOKEN_TARGET` | GitHub token for the target repo (clone + PR) |
+| `GITHUB_REPO` | `owner/repo` of the target repository |
 
-Прогресс внутри одной попытки не сохраняется — Claude Code стартует заново с того же промпта.
+### Optional
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `CLAUDE_AUTH_JSON` | — | Base64 of `~/.claude/.credentials.json` (cloud only) |
+| `LLM_BASE_URL` | `https://api.deepseek.com` | Orchestrator LLM endpoint |
+| `LLM_MODEL` | `deepseek-chat` | Orchestrator LLM model name |
+| `TELEGRAM_BOT_TOKEN` | — | Telegram bot token from @BotFather |
+| `TELEGRAM_CHAT_ID` | — | Telegram chat ID for notifications |
+| `MAX_CONCURRENT_PIPELINES` | `1` | Parallel parent tasks |
+| `MAX_CONCURRENT_JOBS` | `3` | Parallel Claude Code processes |
+| `JOB_TIMEOUT_MINUTES` | `60` | Max runtime per Claude Code call |
+| `MAX_RETRIES` | `3` | Rate limit retry attempts |
+| `RETRY_DELAY_MINUTES` | `10` | Delay between retries |
+| `AUTO_TRANSITION_ON_COMPLETE` | `In Review` | Parent status when all stages done (empty = disabled) |
+| `STAGE_BRANCH` | `stage` | Base branch for PRs |
+| `TRIGGER_STATUS` | `In Progress` | Jira status that triggers the pipeline |
+
+See [.env.example](.env.example) for the full list including all status name overrides.
 
 ---
 
-## Отмена задачи
+## Customization
 
-### Через Jira (рекомендуется)
+### Label taxonomy
 
-Переведи задачу (или подзадачу) в статус **`Cancelled`** — пайплайн получит webhook и немедленно остановит выполнение:
-- Убьёт запущенный процесс Claude Code
-- Пометит job как `cancelled`
-- Никаких изменений в GitHub не будет запушено
+Edit [orchestrator.py](orchestrator.py) → `suggest_labels()` to define your project's services, libraries, and domains. The orchestrator LLM auto-suggests labels from this taxonomy.
 
-> Убедись, что статус `Cancelled` создан в твоём Jira workflow с точным именем, указанным в `STATUS_CANCELLED`.
+### Prompts
 
-### Через API
+Edit [prompts.py](prompts.py) to customize what Claude Code does at each stage. The prompts reference project-specific files like `CLAUDE.md`, `ARCHITECTURE.md`, and `STEERING.md` — create these in your target repo for best results.
 
-```bash
-# Отменить конкретный job
-curl -X POST https://your-domain/jobs/<job_id>/cancel
-```
+### Multi-repo support
 
-Ответ: `{"cancelled": true, "job_id": "..."}` или `{"cancelled": false, "reason": "job is already done"}`.
+Add `repo:bridge` label to a Jira task to route it to a secondary GitHub repo. Configure `GITHUB_REPO_BRIDGE` and `GITHUB_TOKEN_BRIDGE` in `.env`.
 
 ---
 
-## Pipeline labels
+## License
 
-The pipeline uses Jira labels to identify subtask stages and categorize tasks by domain:
+MIT
 
-**Stage labels** (set automatically on subtasks):
-```
-pipeline:sys-analysis
-pipeline:architecture
-pipeline:development
-pipeline:testing
-```
+---
 
-**Auto-suggested domain labels** (DeepSeek suggests based on task content):
-```
-service:constraint-solver    service:robot-bridge    service:operator-ui  ...
-lib:ontology                 lib:rlm                 lib:validator-math   ...
-domain:safety                domain:navigation       domain:perception    ...
-```
+<p align="center">
+  <a href="https://partenit.io">partenit.io</a><br>
+  Made with love for robots
+</p>

@@ -3,18 +3,22 @@ import logging
 
 import httpx
 
-from config import DEEPSEEK_API_KEY, DEEPSEEK_BASE_URL
+from config import LLM_API_KEY, LLM_BASE_URL, LLM_MODEL
 
 logger = logging.getLogger("pipeline.orchestrator")
 
 
-def _call_deepseek(system: str, user: str, max_tokens: int = 2000) -> str:
-    """Один вызов DeepSeek чат-модели."""
+def _call_llm(system: str, user: str, max_tokens: int = 2000) -> str:
+    """Call the orchestrator LLM (any OpenAI-compatible API).
+
+    Works with DeepSeek, OpenAI, Groq, Together, Ollama, LiteLLM proxy, etc.
+    Configure via LLM_BASE_URL, LLM_API_KEY, LLM_MODEL env vars.
+    """
     response = httpx.post(
-        f"{DEEPSEEK_BASE_URL}/v1/chat/completions",
-        headers={"Authorization": f"Bearer {DEEPSEEK_API_KEY}"},
+        f"{LLM_BASE_URL}/v1/chat/completions",
+        headers={"Authorization": f"Bearer {LLM_API_KEY}"},
         json={
-            "model": "deepseek-chat",
+            "model": LLM_MODEL,
             "messages": [
                 {"role": "system", "content": system},
                 {"role": "user", "content": user},
@@ -34,27 +38,27 @@ def parse_adf_to_text(adf_json) -> str:
         return adf_json
     if not adf_json:
         return ""
-    return _call_deepseek(
+    return _call_llm(
         system=(
-            "Конвертируй Atlassian Document Format JSON в чистый markdown. "
-            "Сохрани заголовки, списки, код. Ничего не добавляй от себя."
+            "Convert Atlassian Document Format JSON to clean markdown. "
+            "Keep headings, lists, code blocks. Do not add anything extra."
         ),
         user=json.dumps(adf_json, ensure_ascii=False),
     )
 
 
 def classify_issue(summary: str, description: str, labels: list) -> dict:
-    """Классификация задачи для адаптации промпта Claude Code."""
-    result = _call_deepseek(
+    """Classify a task to adapt the Claude Code prompt."""
+    result = _call_llm(
         system=(
-            "Ты классификатор задач для проекта Trust Layer (Python, ~50 сервисов).\n"
-            "Ответь ТОЛЬКО JSON без backticks:\n"
+            "You are a task classifier for a software project.\n"
+            "Reply with ONLY JSON, no backticks:\n"
             "{\n"
-            '  \"type\": \"bug|endpoint|feature|test|refactor|config\",\n'
-            '  \"complexity\": \"simple|medium|complex\",\n'
-            '  \"main_files\": [\"предположительные файлы\"],\n'
-            '  \"needs_tests\": true,\n'
-            '  \"safety_relevant\": false\n'
+            '  "type": "bug|endpoint|feature|test|refactor|config",\n'
+            '  "complexity": "simple|medium|complex",\n'
+            '  "main_files": ["likely files"],\n'
+            '  "needs_tests": true,\n'
+            '  "safety_relevant": false\n'
             "}"
         ),
         user=f"Summary: {summary}\nLabels: {labels}\nDescription:\n{description}",
@@ -68,7 +72,7 @@ def classify_issue(summary: str, description: str, labels: list) -> dict:
         )
         return json.loads(cleaned)
     except json.JSONDecodeError:
-        logger.warning("Failed to parse DeepSeek classification, fallback default.")
+        logger.warning("Failed to parse LLM classification, fallback default.")
         return {
             "type": "feature",
             "complexity": "medium",
@@ -79,50 +83,30 @@ def classify_issue(summary: str, description: str, labels: list) -> dict:
 
 
 def suggest_labels(summary: str, description: str) -> list[str]:
-    """Use DeepSeek to suggest Jira labels from the project taxonomy.
+    """Use the orchestrator LLM to suggest Jira labels from the project taxonomy.
 
     Returns a list of label strings (max 5) to add to the issue.
     Existing pipeline:xxx labels are NOT touched — this only adds domain/service tags.
+
+    NOTE: Customize the taxonomy below to match your project's services, libraries,
+    and domains. The labels here are examples — replace them with your own.
     """
+    # ── CUSTOMIZE THIS: replace with your project's actual labels ──
     taxonomy = (
-        "# Сервисы (service:*)\n"
-        "service:constraint-solver   — решение конфликтов правил, priority/weight\n"
-        "service:mode-controller     — переключение SHADOW/ADVISORY/FULL\n"
-        "service:decision-log        — аудит решений, события\n"
-        "service:world-simulator     — симуляция Isaac Sim, сценарии\n"
-        "service:skill-library       — библиотека навыков робота\n"
-        "service:fleet-policy-hub    — политики для флота роботов\n"
-        "service:operator-ui         — фронтенд оператора, fleet dashboard\n"
-        "service:sim-dashboard       — дашборд Isaac Sim\n"
-        "service:test-dashboard      — дашборд тестирования реального робота\n"
-        "service:robot-bridge        — мост между Trust Layer и роботом\n"
-        "service:pipeline            — CI/CD автоматизация через Jira\n"
-        "\n"
-        "# Библиотеки (lib:*)\n"
-        "lib:ontology                — правила ISO/IEC, регуляторные нормы\n"
-        "lib:rlm                     — rule lifecycle manager, YAML rules\n"
-        "lib:validator-math          — GateEngine, числовые проверки\n"
-        "lib:fleet-trust-metrics     — метрики токенов, дедлоков флота\n"
-        "lib:decision-math           — алгоритмы принятия решений\n"
-        "\n"
-        "# Домены (domain:*)\n"
-        "domain:safety               — безопасность, L1/L2a, e-stop, тилт\n"
-        "domain:navigation           — движение, скорость, маршруты\n"
-        "domain:perception           — восприятие, камера, LiDAR, VLM\n"
-        "domain:robot-control        — управление роботом, адаптеры H1/N2\n"
-        "domain:fleet                — управление несколькими роботами\n"
-        "domain:infra                — Docker, CI, конфиги, деплой\n"
-        "domain:api                  — HTTP эндпоинты, интеграции\n"
-        "domain:testing              — тесты, pytest, QA\n"
-        "domain:docs                 — документация, ARCHITECTURE.md\n"
+        "# Examples (replace with your own):\n"
+        "service:backend             — main backend service\n"
+        "service:frontend            — web frontend\n"
+        "lib:core                    — core business logic\n"
+        "domain:api                  — HTTP endpoints, integrations\n"
+        "domain:infra                — Docker, CI, configs, deploy\n"
     )
 
-    result = _call_deepseek(
+    result = _call_llm(
         system=(
-            "Ты тегировщик задач для проекта Trust Layer.\n"
-            "Выбери от 1 до 5 тегов из таксономии ниже.\n"
-            "Ответь ТОЛЬКО JSON-массивом строк без backticks, например:\n"
-            '["service:ontology", "domain:safety", "lib:rlm"]\n\n'
+            "You are a task tagger for a software project.\n"
+            "Pick 1 to 5 tags from the taxonomy below.\n"
+            "Reply with ONLY a JSON array of strings, no backticks, e.g.:\n"
+            '["service:auth", "domain:security", "lib:core"]\n\n'
             + taxonomy
         ),
         user=f"Summary: {summary}\nDescription (first 800 chars):\n{description[:800]}",
@@ -135,56 +119,37 @@ def suggest_labels(summary: str, description: str) -> list[str]:
             return [lbl for lbl in labels
                     if isinstance(lbl, str) and lbl in _VALID_LABELS][:5]
     except (json.JSONDecodeError, TypeError):
-        logger.warning("Failed to parse DeepSeek label suggestions")
+        logger.warning("Failed to parse LLM label suggestions")
     return []
 
 
+# ── CUSTOMIZE THIS: must match the taxonomy above ──
 _VALID_LABELS = {
-    "service:constraint-solver",
-    "service:mode-controller",
-    "service:decision-log",
-    "service:world-simulator",
-    "service:skill-library",
-    "service:fleet-policy-hub",
-    "service:operator-ui",
-    "service:sim-dashboard",
-    "service:test-dashboard",
-    "service:robot-bridge",
-    "service:pipeline",
-    "lib:ontology",
-    "lib:rlm",
-    "lib:validator-math",
-    "lib:fleet-trust-metrics",
-    "lib:decision-math",
-    "domain:safety",
-    "domain:navigation",
-    "domain:perception",
-    "domain:robot-control",
-    "domain:fleet",
-    "domain:infra",
+    "service:backend",
+    "service:frontend",
+    "lib:core",
     "domain:api",
-    "domain:testing",
-    "domain:docs",
+    "domain:infra",
 }
 
 
 def build_claude_prompt(issue: dict, classification: dict) -> str:
-    """Собрать промпт для Claude Code."""
+    """Build prompt for Claude Code (legacy single-stage flow)."""
     safety_warning = ""
     if classification.get("safety_relevant"):
         safety_warning = (
             "## ⚠️ SAFETY-RELEVANT\n"
-            "Прочитай STEERING.md §4 перед работой. "
-            "L1/L2a — без ML. Fail-closed. audit_ref обязателен.\n\n"
+            "Read STEERING.md before starting. "
+            "L1/L2a — no ML. Fail-closed. audit_ref required.\n\n"
         )
 
     type_instructions = {
-        "bug": "Найди баг → напиши падающий тест → исправь → тест зелёный.",
-        "endpoint": "Найди сервис → добавь handler → тесты happy path + error.",
-        "feature": "Разбей на шаги → реализуй → тесты.",
-        "test": "Напиши тесты: happy path, edge cases, errors.",
-        "refactor": "Тесты зелёные ДО → рефакторинг → тесты зелёные ПОСЛЕ.",
-        "config": "Измени конфиг → проверь что стартует.",
+        "bug": "Find the bug → write a failing test → fix → test passes.",
+        "endpoint": "Find the service → add handler → tests for happy path + error.",
+        "feature": "Break into steps → implement → tests.",
+        "test": "Write tests: happy path, edge cases, errors.",
+        "refactor": "Tests green BEFORE → refactor → tests green AFTER.",
+        "config": "Change config → verify it starts.",
     }
 
     task_type = classification.get("type", "feature")
@@ -192,30 +157,30 @@ def build_claude_prompt(issue: dict, classification: dict) -> str:
 
     return (
         f"{safety_warning}"
-        f"## Задача: {issue['key']} — {issue['summary']}\n\n"
-        f"Тип: {issue['issue_type']} | Приоритет: {issue['priority']}\n"
-        f"Компоненты: {', '.join(issue.get('components', []))}\n\n"
-        "## Описание\n"
+        f"## Task: {issue['key']} — {issue['summary']}\n\n"
+        f"Type: {issue['issue_type']} | Priority: {issue['priority']}\n"
+        f"Components: {', '.join(issue.get('components', []))}\n\n"
+        "## Description\n"
         f"{issue['description_text']}\n\n"
-        "## Подход\n"
+        "## Approach\n"
         f"{instruction}\n\n"
-        "## Правила\n"
-        "1. Прочитай CLAUDE.md для контекста.\n"
-        "2. Минимальные изменения — только по задаче.\n"
-        "3. pytest tests/ — ВСЕ тесты зелёные.\n"
-        "4. Если меняешь сервис — обнови ARCHITECTURE.md.\n"
-        "5. НЕ рефакторь \"заодно\". НЕ создавай коммиты.\n"
-        "6. Непонятно → TODO с объяснением.\n"
+        "## Rules\n"
+        "1. Read CLAUDE.md for project context.\n"
+        "2. Minimal changes — only what the task requires.\n"
+        "3. pytest tests/ — ALL tests must pass.\n"
+        "4. If you modify a service — update ARCHITECTURE.md.\n"
+        "5. Do NOT refactor unrelated code. Do NOT create commits.\n"
+        "6. If unclear → leave a TODO with explanation.\n"
     ).strip()
 
 
 def analyze_result(claude_output: str, changed_files: list) -> dict:
-    """DeepSeek анализирует, что сделал Claude Code."""
-    result = _call_deepseek(
+    """Orchestrator LLM analyzes what Claude Code produced."""
+    result = _call_llm(
         system=(
-            "Проанализируй результат Claude Code. JSON без backticks:\n"
-            '{"summary_ru":"2-3 предложения","files_changed":["..."],'
-            '"tests_status":"passed|failed|unknown","concerns":["если есть"]}'
+            "Analyze the Claude Code output. Reply with JSON, no backticks:\n"
+            '{"summary_ru":"2-3 sentences","files_changed":["..."],'
+            '"tests_status":"passed|failed|unknown","concerns":["if any"]}'
         ),
         user=(
             f"Output (last 3000 chars):\n{claude_output[-3000:]}\n\n"
@@ -231,9 +196,9 @@ def analyze_result(claude_output: str, changed_files: list) -> dict:
         )
         return json.loads(cleaned)
     except json.JSONDecodeError:
-        logger.warning("Failed to parse DeepSeek analysis, using fallback.")
+        logger.warning("Failed to parse LLM analysis, using fallback.")
         return {
-            "summary_ru": "Задача выполнена. Проверь PR.",
+            "summary_ru": "Task completed. Check the PR.",
             "files_changed": changed_files,
             "tests_status": "unknown",
             "concerns": [],

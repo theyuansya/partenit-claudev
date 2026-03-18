@@ -9,8 +9,8 @@ RUN curl -fsSL https://deb.nodesource.com/setup_20.x | bash - && \
 RUN npm install -g @anthropic-ai/claude-code
 
 # Git config for automated commits
-RUN git config --global user.name "Trust Layer Pipeline" && \
-    git config --global user.email "pipeline@partenit.ai"
+RUN git config --global user.name "Claudev" && \
+    git config --global user.email "claudev@noreply.github.com"
 
 WORKDIR /app
 
