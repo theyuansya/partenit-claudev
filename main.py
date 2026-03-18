@@ -444,17 +444,26 @@ def _startup_recovery() -> None:
         jira = JiraClient()
 
         # Search for in-progress tasks in the project
+        # Use new /search/jql endpoint (Jira Cloud deprecated /search → 410 Gone)
         import httpx
-        r = httpx.get(
-            f"{jira.base_url}/rest/api/3/search",
+        jql = f"project = {JIRA_PROJECT_KEY} AND status = \"{TRIGGER_STATUS}\""
+        search_body = {"jql": jql, "maxResults": 10, "fields": ["summary", "status", "subtasks"]}
+
+        r = httpx.post(
+            f"{jira.base_url}/rest/api/3/search/jql",
             headers=jira.headers,
-            params={
-                "jql": f"project = {JIRA_PROJECT_KEY} AND status = \"{TRIGGER_STATUS}\"",
-                "maxResults": 10,
-                "fields": "summary,status,subtasks",
-            },
+            json=search_body,
             timeout=15,
         )
+        # Fallback to legacy endpoint if new one not available
+        if r.status_code in (404, 405):
+            logger.info("[startup] /search/jql not available, falling back to /search")
+            r = httpx.get(
+                f"{jira.base_url}/rest/api/3/search",
+                headers=jira.headers,
+                params={"jql": jql, "maxResults": 10, "fields": "summary,status,subtasks"},
+                timeout=15,
+            )
         if not r.is_success:
             logger.warning("[startup] Jira search failed: %s", r.status_code)
             return
